@@ -90,7 +90,18 @@ final class TomlConfigFile {
 
         if (repaired) {
             backup(path, clock);
-            writeAtomically(path, render(spec, values, unknown));
+            // Only rewrite when the document we would produce still parses. Unknown sections are
+            // copied straight from the parsed file, and a nested table, an array of tables or an
+            // unknown key nested under a known one cannot be written back as `key = value`.
+            // Writing anyway would replace a user's unrelated settings with a file that no longer
+            // parses, which the next launch then backs up and regenerates from defaults.
+            String rendered = render(spec, values, unknown);
+            if (Toml.parse(rendered, TomlVersion.V1_0_0).errors().isEmpty()) {
+                writeAtomically(path, rendered);
+            } else {
+                logger.warn("Config {} was repaired in memory but left unchanged on disk because its "
+                        + "unknown sections cannot be written back safely", path);
+            }
         }
         return new DefaultConfigHandle(path, values);
     }
