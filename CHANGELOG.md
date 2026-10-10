@@ -2,6 +2,44 @@
 
 ## 0.1.0-beta.1 - unreleased
 
+- Fixed the settings plugin registering Maven Central from `apply()`, which prepended it
+  ahead of every repository a consumer declares afterwards. The contract test mod, the demo
+  mod and every smoke lane therefore resolved the published SDK from Central instead of the
+  locally published workspace build, so the nine-target matrix was validating previously
+  released artifacts rather than the working tree. Maven Central is now an idempotent
+  fallback registered after consumer repositories.
+- Fixed the shared runtime disconnecting a player when a consumer's packet handler or menu
+  action handler threw. Handler dispatch is now isolated and logged, matching the documented
+  event-listener policy, and a failing menu handler no longer sends the mod's exception
+  message -- which can echo submitted input -- as the disconnect reason. Malformed packets
+  still disconnect.
+- Fixed TOML repair rewriting unknown sections as `key = value`. An array of tables became
+  `items = [[]]` plus stray headers, destroying unrelated settings and producing a file the
+  next launch rejected and regenerated from defaults. A repaired document is now parsed before
+  it is written; if unknown sections cannot be represented safely the values are still
+  repaired in memory and the file is left untouched.
+- Fixed closed event subscriptions accumulating forever on their event. `Subscription.close`
+  now detaches the registration instead of only muting it, so a long-running server no longer
+  retains every block entity, menu and player session its listeners captured.
+- Fixed registration IDs being burned when native registration failed. Item, block, creative
+  tab and command registrars now release their reservation, matching the client command,
+  screen and reload registrars.
+- Fixed `MenuState` capping synchronized entries at 64 while `MenuSpec` accepts two eight-row
+  selection lists needing 106, so a legally declared menu could not be opened.
+- Fixed non-deterministic iteration order in `BlockEntitySpec.animations()` and
+  `ConfigHandle.snapshot()`, both of which copied ordered collections with unordered factories.
+- Fixed builders recording state before validating it, so a rejected declaration left the
+  builder corrupted and a corrected retry failed with a misleading error. This affects
+  `ConfigSpec`, `WorkbenchSpec` and `MenuSpec`.
+- Fixed `PacketCodecs.string`/`bytes` accepting byte bounds that were only rejected later
+  inside loader networking, and `StorageContainerSpec` rejecting any container group whose
+  name merely started with `player_`.
+- Fixed `MinecraftVersion` accepting version segments too large to parse, which then threw
+  from `compareTo`.
+- Fixed `DefaultConfigManager` reserving a config name before checking the environment, so a
+  client config rejected on a dedicated server reported a duplicate on every later attempt.
+- Added a release note documenting dependency repository precedence for consumers.
+
 - Added a fail-closed release workflow that verifies fresh Windows/Linux consumer
   builds, reproducible checksums, the starter template, all nine dedicated-server,
   client/UI, and connected-gameplay targets, signed Maven Central contents, Plugin
