@@ -240,10 +240,42 @@ class DefaultMenuManagerTest {
         assertEquals(uk.co.enderfall.sdk.api.ui.MenuListAction.Type.SELECT, received.get().type());
     }
 
+    @Test
+    void aFailingConsumerActionHandlerIsLoggedInsteadOfDisconnectingThePlayer() {
+        LinkedAdapter serverAdapter = new LinkedAdapter(Environment.DEDICATED_SERVER);
+        LinkedAdapter clientAdapter = new LinkedAdapter(Environment.CLIENT);
+        serverAdapter.peer = clientAdapter;
+        clientAdapter.peer = serverAdapter;
+        RecordingLogger logger = new RecordingLogger();
+        DefaultMenuManager server = manager(serverAdapter, logger);
+        DefaultMenuManager client = manager(clientAdapter, new RecordingLogger());
+        MenuSpec spec = MenuSpec.builder("Editor")
+                .textInput(MenuTextInput.singleLine("name", "Name", 10, 30, 100, 2))
+                .button(MenuButton.of("save", "Save", 10, 60, 60))
+                .build();
+        // A consumer validating its own input would naturally throw IllegalArgumentException, which
+        // used to be reported as a malformed packet and disconnect the player with that message.
+        MenuRef ref = server.register("editor", spec, context -> {
+            throw new IllegalArgumentException("name " + context.inputs().get("name") + " is reserved");
+        });
+        client.register("editor", spec, ignored -> { });
+        server.open(PLAYER, ref, MenuState.empty());
+
+        // LinkedAdapter turns any disconnect into an AssertionError, so reaching the assertion
+        // below proves the player was not kicked and the consumer message never left the server.
+        clientAdapter.actionSender.accept(new PortableMenuSubmission("save", Map.of("name", "ok")));
+
+        assertEquals(1, logger.failures().size());
+        assertEquals(IllegalArgumentException.class, logger.failures().get(0).getClass());
+    }
+
     private static DefaultMenuManager manager(LinkedAdapter adapter) {
+        return manager(adapter, new RecordingLogger());
+    }
+
+    private static DefaultMenuManager manager(LinkedAdapter adapter, RecordingLogger logger) {
         return new DefaultMenuManager("test_mod", "1.21.4-fabric", adapter,
-                new RegistrationGate(), new SystemModLogger("test_mod"),
-                new DefaultEventBus(new SystemModLogger("test_mod")));
+                new RegistrationGate(), logger, new DefaultEventBus(logger));
     }
 
     private static final class LinkedAdapter implements PlatformAdapter {

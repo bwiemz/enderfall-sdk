@@ -283,7 +283,14 @@ public final class DefaultMenuManager implements MenuManager {
             throw new PacketDecodingException("Disabled menu action " + action);
         }
         Map<String, String> inputs = readInputs(reader, session.registration().spec());
-        session.registration().handler().handle(new ActionContext(playerId, session, action, inputs));
+        try {
+            session.registration().handler().handle(new ActionContext(playerId, session, action, inputs));
+        } catch (RuntimeException failure) {
+            // A consumer menu handler is a callback, not part of the wire contract. Isolating it
+            // keeps a mod's own validation error from disconnecting the player, and keeps its
+            // message -- which may echo menu input -- out of the disconnect reason and the log.
+            logger.error("Menu action handler for {} failed", failure, action);
+        }
     }
 
     private void sendAction(long sessionId, PortableMenuSubmission submission) {
