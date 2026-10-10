@@ -1,6 +1,5 @@
 package uk.co.enderfall.sdk.runtime;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -18,7 +17,11 @@ public final class DefaultWorkbenchManager implements WorkbenchManager {
     private final String target;
     private final PlatformAdapter adapter;
     private final RegistrationGateAccess gate;
-    private final Map<ResourceId, PortableWorkbenchDefinition> registrations = new LinkedHashMap<>();
+    // Only read and put-if-absent, never iterated, so a concurrent map matches the runtime's other
+    // registration tables. Readers on the server thread no longer observe a plain HashMap that a
+    // registration is mutating under a different lock.
+private final Map<ResourceId, PortableWorkbenchDefinition> registrations =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public DefaultWorkbenchManager(String modId, String target, PlatformAdapter adapter,
                                    RegistrationGateAccess gate) {

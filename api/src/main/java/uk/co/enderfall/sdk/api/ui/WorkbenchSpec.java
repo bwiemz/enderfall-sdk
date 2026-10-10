@@ -17,8 +17,8 @@ public final class WorkbenchSpec {
 
     private WorkbenchSpec(Builder builder) {
         title = builder.title;
-        machineInputs = builder.machineInputs;
-        machineOutputs = builder.machineOutputs;
+        machineInputs = java.util.List.copyOf(builder.machineInputs);
+        machineOutputs = java.util.List.copyOf(builder.machineOutputs);
         machine = builder.machine;
         recipeType = builder.recipeType;
         backgroundColor = builder.backgroundColor;

@@ -1,6 +1,5 @@
 package uk.co.enderfall.sdk.runtime;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -16,7 +15,11 @@ public final class DefaultStorageContainerManager implements StorageContainerMan
     private final String target;
     private final PlatformAdapter adapter;
     private final RegistrationGateAccess gate;
-    private final Map<ResourceId, PortableStorageContainerDefinition> registrations = new LinkedHashMap<>();
+    // Only read and put-if-absent, never iterated, so a concurrent map matches the runtime's other
+    // registration tables. Readers on the server thread no longer observe a plain HashMap that a
+    // registration is mutating under a different lock.
+private final Map<ResourceId, PortableStorageContainerDefinition> registrations =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public DefaultStorageContainerManager(String modId, String target, PlatformAdapter adapter,
             RegistrationGateAccess gate) {
