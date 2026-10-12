@@ -29,7 +29,9 @@ import uk.co.enderfall.sdk.runtime.network.ByteArrayPacketWriter;
 /** Runtime-owned synchronized menu registration, session validation, and wire protocol. */
 public final class DefaultMenuManager implements MenuManager {
     static final int PACKET_LIMIT = 16_384;
-    private static final int PROTOCOL_VERSION = 2;
+    // Bump whenever a peer on the previous version could reject what this one sends. 3 raised the
+    // state budget from 64 to MenuState.MAXIMUM_ENTRIES (128), which a version-2 reader rejects.
+    private static final int PROTOCOL_VERSION = 3;
     private static final int OPEN = 1;
     private static final int UPDATE = 2;
     private static final int CLOSE = 3;

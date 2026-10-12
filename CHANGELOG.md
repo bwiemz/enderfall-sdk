@@ -28,7 +28,10 @@
   screen and reload registrars. Workbenches and storage containers are now recorded only once
   native registration succeeds, so a rejected one can be retried and can never be opened.
 - Fixed `MenuState` capping synchronized entries at 64 while `MenuSpec` accepts two eight-row
-  selection lists needing 106, so a legally declared menu could not be opened.
+  selection lists needing 106, so a legally declared menu could not be opened. Because a
+  0.1.0-beta.1 peer rejects states above 64 entries, the menu wire protocol is now version 3:
+  a mixed client and server fail on the first menu packet with "Unsupported EnderFall menu
+  protocol" instead of only when a menu happens to carry more than 64 entries.
 - Fixed a menu update too large for the 16 KiB menu packet still replacing the server's copy of
   the state. The client kept showing the old page, so the player's next row click resolved to
   an entry from a page they never saw. Such an update now throws before anything changes, with

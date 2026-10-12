@@ -322,6 +322,25 @@ class DefaultMenuManagerTest {
         org.junit.jupiter.api.Assertions.assertNull(clientAdapter.updated);
     }
 
+    @Test
+    void aPeerOnTheSixtyFourEntryProtocolIsRejectedByVersionNotByEntryCount() {
+        // 0.1.0-beta.1 spoke menu protocol 2 and rejects states above 64 entries. The 128-entry
+        // budget is a wire change, so a mixed pair must fail on the first menu packet with a clear
+        // reason, not only when a menu happens to carry more than 64 entries.
+        LinkedAdapter clientAdapter = new LinkedAdapter(Environment.CLIENT);
+        manager(clientAdapter);
+        var writer = new uk.co.enderfall.sdk.runtime.network.ByteArrayPacketWriter(DefaultMenuManager.PACKET_LIMIT);
+        writer.writeVarInt(2);
+        writer.writeByte(1);
+        var reasons = new java.util.ArrayList<String>();
+
+        clientAdapter.receiver.receive(writer.toByteArray(), PacketDirection.CLIENTBOUND, Optional.empty(),
+                reasons::add);
+
+        assertEquals(1, reasons.size());
+        assertTrue(reasons.get(0).contains("Unsupported EnderFall menu protocol 2"), reasons::toString);
+    }
+
     private static MenuState page(MenuSelectionList list, String firstEntry) {
         return MenuState.builder().selectionPage(list,
                 java.util.List.of(MenuSelectionEntry.enabled(firstEntry, "Entry")), 0, "").build();
