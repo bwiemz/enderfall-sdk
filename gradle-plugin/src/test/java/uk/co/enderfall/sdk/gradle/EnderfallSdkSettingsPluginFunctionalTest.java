@@ -192,6 +192,26 @@ class EnderfallSdkSettingsPluginFunctionalTest {
      */
     @Test
     void consumerRepositoryTakesPrecedenceOverMavenCentral() throws IOException {
+        assertCentralIsASingleFallbackAfterLocalStubs(repositoryOrder("mavenCentral()"));
+    }
+
+    /** A consumer that declares no Central of its own must still get exactly one, last. */
+    @Test
+    void mavenCentralIsAddedAsAFallbackWhenTheConsumerDeclaresNone() throws IOException {
+        assertCentralIsASingleFallbackAfterLocalStubs(repositoryOrder(""));
+    }
+
+    private static void assertCentralIsASingleFallbackAfterLocalStubs(java.util.List<String> repositories) {
+        int local = repositories.indexOf("LocalStubs");
+        int central = repositories.indexOf("MavenRepo");
+        assertTrue(local >= 0, "The consumer repository is missing from " + repositories);
+        assertTrue(central >= 0, "Maven Central was not offered as a fallback in " + repositories);
+        assertTrue(local < central, "Maven Central shadows the consumer repository in " + repositories);
+        assertEquals(1, repositories.stream().filter("MavenRepo"::equals).count(),
+                "Maven Central must not be registered twice in " + repositories);
+    }
+
+    private java.util.List<String> repositoryOrder(String repositoriesAfterLocalStubs) throws IOException {
         Path repository = temporaryDirectory.resolve("precedence-repository");
         write("settings.gradle.kts", """
                 plugins { id("uk.co.enderfall.sdk") }
@@ -203,7 +223,7 @@ class EnderfallSdkSettingsPluginFunctionalTest {
                 dependencyResolutionManagement {
                     repositories {
                         maven { name = "LocalStubs"; url = uri("%s") }
-                        mavenCentral()
+                        %s
                     }
                 }
                 // Registered after the plugin's own settingsEvaluated callback, so it observes the
@@ -213,7 +233,7 @@ class EnderfallSdkSettingsPluginFunctionalTest {
                         .withType(org.gradle.api.artifacts.repositories.MavenArtifactRepository::class.java)
                         .joinToString(",") { it.name })
                 }
-                """.formatted(repository.toUri()));
+                """.formatted(repository.toUri(), repositoriesAfterLocalStubs));
         write("build.gradle.kts", """
                 tasks.register("initializeMod")
                 """);
@@ -226,14 +246,7 @@ class EnderfallSdkSettingsPluginFunctionalTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("The fixture did not report its repository order"))
                 .substring("RESOLVED_REPOSITORY_ORDER=".length());
-        java.util.List<String> repositories = java.util.List.of(order.split(","));
-        int local = repositories.indexOf("LocalStubs");
-        int central = repositories.indexOf("MavenRepo");
-        assertTrue(local >= 0, "The consumer repository is missing from " + repositories);
-        assertTrue(central >= 0, "Maven Central was not offered as a fallback in " + repositories);
-        assertTrue(local < central, "Maven Central shadows the consumer repository in " + repositories);
-        assertEquals(1, repositories.stream().filter("MavenRepo"::equals).count(),
-                "Maven Central must not be registered twice in " + repositories);
+        return java.util.List.of(order.split(","));
     }
 
     @Test
