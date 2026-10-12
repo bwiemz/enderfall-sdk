@@ -185,14 +185,28 @@ public final class DefaultMenuManager implements MenuManager {
             throw new IllegalStateException("[" + modId + "] Player has no active menu on " + target);
         }
         validateInputState(existing.registration().spec(), state);
-        // Encode before recording the state. Selection rows resolve entry IDs from the server's
-        // copy, so recording a state the client never receives would make the player's next click
-        // act on an entry from a page they cannot see.
-        byte[] payload = encodeState(UPDATE, existing.id(), state);
-        if (!serverSessions.replace(playerId, existing, existing.withState(state))) {
-            throw new IllegalStateException("[" + modId + "] Player's menu changed during the update on " + target);
+        recordAndSend(playerId, existing, state);
+    }
+
+    /**
+     * Records {@code replacement} as the session's state and sends it, or leaves the session as it
+     * was. Selection rows resolve entry IDs from the server's copy, so a state the client never
+     * receives must not stay recorded: the player's next click would act on an entry from a page
+     * they cannot see. It is therefore encoded first, and withdrawn again if sending fails.
+     */
+    private void recordAndSend(UUID playerId, ServerSession current, MenuState replacement) {
+        byte[] payload = encodeState(UPDATE, current.id(), replacement);
+        ServerSession updated = current.withState(replacement);
+        if (!serverSessions.replace(playerId, current, updated)) {
+            throw new IllegalStateException("[" + modId + "] Menu session changed or closed during the update on "
+                    + target);
         }
-        adapter.sendToPlayer(playerId, payloadId, payload);
+        try {
+            adapter.sendToPlayer(playerId, payloadId, payload);
+        } catch (RuntimeException failure) {
+            serverSessions.replace(playerId, updated, current);
+            throw failure;
+        }
     }
 
     @Override
@@ -478,12 +492,8 @@ public final class DefaultMenuManager implements MenuManager {
             if (current == null || current.id() != sessionId) {
                 throw new IllegalStateException("Menu session is no longer active");
             }
-            // Encoded first for the same reason as MenuManager.update: a state that cannot be sent
-            // must not become the one the next row action is validated against.
-            byte[] payload = encodeState(UPDATE, sessionId, replacement);
+            recordAndSend(playerId, current, replacement);
             state = replacement;
-            serverSessions.put(playerId, current.withState(replacement));
-            adapter.sendToPlayer(playerId, payloadId, payload);
         }
 
         @Override

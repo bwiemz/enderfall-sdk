@@ -35,7 +35,8 @@
 - Fixed a menu update too large for the 16 KiB menu packet still replacing the server's copy of
   the state. The client kept showing the old page, so the player's next row click resolved to
   an entry from a page they never saw. Such an update now throws before anything changes, with
-  a message naming the mod and the packet limit.
+  a message naming the mod and the packet limit, and an update the transport fails to deliver is
+  withdrawn from the server's copy.
 - Fixed non-deterministic iteration order in `BlockEntitySpec.animations()` and
   `ConfigHandle.snapshot()`, both of which copied ordered collections with unordered factories.
 - Fixed builders recording state before validating it, so a rejected declaration left the

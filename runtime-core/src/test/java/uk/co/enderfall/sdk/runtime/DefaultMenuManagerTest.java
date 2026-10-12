@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -269,57 +270,47 @@ class DefaultMenuManagerTest {
         assertEquals(IllegalArgumentException.class, logger.failures().get(0).getClass());
     }
 
+    // Selection rows resolve entry IDs from the server's copy of the state, so in each test below a
+    // click on row 0 must still reach the entry the player can see, not one from an unsent page.
+
     @Test
     void anUpdateTooLargeToSendLeavesTheServerSessionOnTheStateTheClientShows() {
-        LinkedAdapter serverAdapter = new LinkedAdapter(Environment.DEDICATED_SERVER);
-        LinkedAdapter clientAdapter = new LinkedAdapter(Environment.CLIENT);
-        serverAdapter.peer = clientAdapter;
-        clientAdapter.peer = serverAdapter;
-        DefaultMenuManager server = manager(serverAdapter);
-        DefaultMenuManager client = manager(clientAdapter);
-        var list = MenuSelectionList.of("recipes", 10, 20, 120, 3);
-        var spec = MenuSpec.builder("Recipes").size(160, 120).selectionList(list).build();
-        var received = new java.util.ArrayList<String>();
-        var ref = server.register("recipes", spec, action -> received.add(list.action(action).orElseThrow().entryId()));
-        client.register("recipes", spec, ignored -> { });
-        server.open(PLAYER, ref, page(list, "test:shown"));
+        SelectionMenu menu = new SelectionMenu((self, action) -> { });
 
         var failure = assertThrows(IllegalArgumentException.class,
-                () -> server.update(PLAYER, oversized(page(list, "test:never_sent"))));
+                () -> menu.server.update(PLAYER, oversized(menu.page("test:never_sent"))));
         assertTrue(failure.getMessage().contains(String.valueOf(DefaultMenuManager.PACKET_LIMIT)), failure::getMessage);
 
-        // Row 0 must still resolve to the entry the player can see, not to one from the unsent page.
-        clientAdapter.actionSender.accept(new PortableMenuSubmission("recipes.select.0", Map.of()));
-        assertEquals(java.util.List.of("test:shown"), received);
-        org.junit.jupiter.api.Assertions.assertNull(clientAdapter.updated);
+        menu.clickFirstRow();
+        assertEquals(List.of("test:shown"), menu.received);
+        org.junit.jupiter.api.Assertions.assertNull(menu.clientAdapter.updated);
     }
 
     @Test
     void aHandlerUpdateTooLargeToSendLeavesTheServerSessionOnTheStateTheClientShows() {
-        LinkedAdapter serverAdapter = new LinkedAdapter(Environment.DEDICATED_SERVER);
-        LinkedAdapter clientAdapter = new LinkedAdapter(Environment.CLIENT);
-        serverAdapter.peer = clientAdapter;
-        clientAdapter.peer = serverAdapter;
-        RecordingLogger logger = new RecordingLogger();
-        DefaultMenuManager server = manager(serverAdapter, logger);
-        DefaultMenuManager client = manager(clientAdapter);
-        var list = MenuSelectionList.of("recipes", 10, 20, 120, 3);
-        var spec = MenuSpec.builder("Recipes").size(160, 120).selectionList(list).build();
-        var received = new java.util.ArrayList<String>();
         // A paging handler whose next page is too large: its update fails and is logged.
-        var ref = server.register("recipes", spec, action -> {
-            received.add(list.action(action).orElseThrow().entryId());
-            action.update(oversized(page(list, "test:never_sent")));
-        });
-        client.register("recipes", spec, ignored -> { });
-        server.open(PLAYER, ref, page(list, "test:shown"));
+        SelectionMenu menu = new SelectionMenu((self, action) -> action.update(oversized(self.page("test:never_sent"))));
 
-        clientAdapter.actionSender.accept(new PortableMenuSubmission("recipes.select.0", Map.of()));
-        clientAdapter.actionSender.accept(new PortableMenuSubmission("recipes.select.0", Map.of()));
+        menu.clickFirstRow();
+        menu.clickFirstRow();
 
-        assertEquals(java.util.List.of("test:shown", "test:shown"), received);
-        assertEquals(2, logger.failures().size());
-        org.junit.jupiter.api.Assertions.assertNull(clientAdapter.updated);
+        assertEquals(List.of("test:shown", "test:shown"), menu.received);
+        assertEquals(2, menu.serverLogger.failures().size());
+        org.junit.jupiter.api.Assertions.assertNull(menu.clientAdapter.updated);
+    }
+
+    @Test
+    void anUpdateTheTransportFailsToDeliverIsWithdrawnFromTheServerSession() {
+        SelectionMenu menu = new SelectionMenu((self, action) -> { });
+
+        menu.serverAdapter.failSends = true;
+        var failure = assertThrows(IllegalStateException.class,
+                () -> menu.server.update(PLAYER, menu.page("test:never_sent")));
+        assertEquals("transport closed", failure.getMessage());
+        menu.serverAdapter.failSends = false;
+
+        menu.clickFirstRow();
+        assertEquals(List.of("test:shown"), menu.received);
     }
 
     @Test
@@ -341,9 +332,38 @@ class DefaultMenuManagerTest {
         assertTrue(reasons.get(0).contains("Unsupported EnderFall menu protocol 2"), reasons::toString);
     }
 
-    private static MenuState page(MenuSelectionList list, String firstEntry) {
-        return MenuState.builder().selectionPage(list,
-                java.util.List.of(MenuSelectionEntry.enabled(firstEntry, "Entry")), 0, "").build();
+    /** A linked server and client with a three-row selection menu open on entry "test:shown". */
+    private static final class SelectionMenu {
+        private final MenuSelectionList list = MenuSelectionList.of("recipes", 10, 20, 120, 3);
+        private final LinkedAdapter serverAdapter = new LinkedAdapter(Environment.DEDICATED_SERVER);
+        private final LinkedAdapter clientAdapter = new LinkedAdapter(Environment.CLIENT);
+        private final RecordingLogger serverLogger = new RecordingLogger();
+        private final List<String> received = new java.util.ArrayList<>();
+        private final DefaultMenuManager server;
+
+        private SelectionMenu(
+                java.util.function.BiConsumer<SelectionMenu, uk.co.enderfall.sdk.api.ui.MenuActionContext> afterSelect) {
+            serverAdapter.peer = clientAdapter;
+            clientAdapter.peer = serverAdapter;
+            server = manager(serverAdapter, serverLogger);
+            DefaultMenuManager client = manager(clientAdapter);
+            var spec = MenuSpec.builder("Recipes").size(160, 120).selectionList(list).build();
+            var ref = server.register("recipes", spec, action -> {
+                received.add(list.action(action).orElseThrow().entryId());
+                afterSelect.accept(this, action);
+            });
+            client.register("recipes", spec, ignored -> { });
+            server.open(PLAYER, ref, page("test:shown"));
+        }
+
+        private MenuState page(String firstEntry) {
+            return MenuState.builder().selectionPage(list,
+                    List.of(MenuSelectionEntry.enabled(firstEntry, "Entry")), 0, "").build();
+        }
+
+        private void clickFirstRow() {
+            clientAdapter.actionSender.accept(new PortableMenuSubmission("recipes.select.0", Map.of()));
+        }
     }
 
     /** Adds legal values until the state no longer fits one menu packet. */
@@ -373,6 +393,7 @@ class DefaultMenuManagerTest {
         private MenuState updated;
         private Consumer<PortableMenuSubmission> actionSender;
         private Runnable closeSender;
+        private boolean failSends;
 
         private LinkedAdapter(Environment environment) {
             this.environment = environment;
@@ -393,6 +414,7 @@ class DefaultMenuManagerTest {
                     reason -> { throw new AssertionError(reason); });
         }
         @Override public void sendToPlayer(UUID playerId, ResourceId id, byte[] payload) {
+            if (failSends) throw new IllegalStateException("transport closed");
             peer.receiver.receive(payload, PacketDirection.CLIENTBOUND, Optional.empty(),
                     reason -> { throw new AssertionError(reason); });
         }
