@@ -13,6 +13,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -89,14 +90,15 @@ final class TomlConfigFile {
         }
 
         if (repaired) {
-            backup(path, clock);
-            // Only rewrite when the document we would produce still parses. Unknown sections are
-            // copied straight from the parsed file, and a nested table, an array of tables or an
-            // unknown key nested under a known one cannot be written back as `key = value`.
-            // Writing anyway would replace a user's unrelated settings with a file that no longer
-            // parses, which the next launch then backs up and regenerates from defaults.
+            // Only rewrite when the document we would produce reads back as exactly the values we
+            // hold. Unknown sections are copied straight from the parsed file, and an array of tables
+            // cannot be written back as `key = value`: two entries stop parsing, and one entry still
+            // parses but moves its keys to the document root. Either way a user's unrelated settings
+            // would be lost. The file is then left untouched, so there is nothing to back up; backing
+            // it up anyway would add a copy on every launch, since the invalid value is never removed.
             String rendered = render(spec, values, unknown);
-            if (Toml.parse(rendered, TomlVersion.V1_0_0).errors().isEmpty()) {
+            if (readsBackAs(rendered, values, unknown)) {
+                backup(path, clock);
                 writeAtomically(path, rendered);
             } else {
                 logger.warn("Config {} was repaired in memory but left unchanged on disk because its "
@@ -104,6 +106,42 @@ final class TomlConfigFile {
             }
         }
         return new DefaultConfigHandle(path, values);
+    }
+
+    private static boolean readsBackAs(String rendered, Map<ConfigKey<?>, Object> values,
+                                       Map<String, Object> unknown) {
+        TomlParseResult reparsed = Toml.parse(rendered, TomlVersion.V1_0_0);
+        if (!reparsed.errors().isEmpty()) {
+            return false;
+        }
+        Map<String, Object> readBack = new HashMap<>();
+        reparsed.dottedEntrySet().forEach(entry -> readBack.put(entry.getKey(), plain(entry.getValue())));
+        // Known values were validated and are rendered by the SDK itself, so only their presence is
+        // checked. Every other key must read back with the value the user wrote and nothing extra.
+        for (ConfigKey<?> key : values.keySet()) {
+            if (readBack.remove(key.path()) == null) {
+                return false;
+            }
+        }
+        Map<String, Object> retained = new HashMap<>();
+        unknown.forEach((key, value) -> retained.put(key, plain(value)));
+        return readBack.equals(retained);
+    }
+
+    private static Object plain(Object value) {
+        if (value instanceof TomlTable table) {
+            Map<String, Object> map = new HashMap<>();
+            table.entrySet().forEach(entry -> map.put(entry.getKey(), plain(entry.getValue())));
+            return map;
+        }
+        if (value instanceof TomlArray array) {
+            List<Object> list = new ArrayList<>(array.size());
+            for (int index = 0; index < array.size(); index++) {
+                list.add(plain(array.get(index)));
+            }
+            return list;
+        }
+        return value;
     }
 
     static Map<ConfigKey<?>, Object> defaults(ConfigSpec spec) {

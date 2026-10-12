@@ -15,9 +15,10 @@
   still disconnect.
 - Fixed TOML repair rewriting unknown sections as `key = value`. An array of tables became
   `items = [[]]` plus stray headers, destroying unrelated settings and producing a file the
-  next launch rejected and regenerated from defaults. A repaired document is now parsed before
-  it is written; if unknown sections cannot be represented safely the values are still
-  repaired in memory and the file is left untouched.
+  next launch rejected and regenerated from defaults; a single `[[items]]` entry still parsed
+  but moved its keys to the document root. A repaired document is now written only if it reads
+  back with every value the user wrote; otherwise the values are still repaired in memory and
+  the file is left untouched, without a backup that would otherwise repeat on every launch.
 - Fixed closed event subscriptions accumulating forever on their event. `Subscription.close`
   now detaches the registration instead of only muting it, so a long-running server no longer
   retains every block entity, menu and player session its listeners captured.
