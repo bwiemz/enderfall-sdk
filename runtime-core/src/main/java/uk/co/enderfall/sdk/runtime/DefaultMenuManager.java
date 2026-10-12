@@ -288,7 +288,8 @@ public final class DefaultMenuManager implements MenuManager {
         } catch (RuntimeException failure) {
             // A consumer menu handler is a callback, not part of the wire contract. Isolating it
             // keeps a mod's own validation error from disconnecting the player, and keeps its
-            // message -- which may echo menu input -- out of the disconnect reason and the log.
+            // message -- which may echo menu input -- out of the disconnect reason sent to the
+            // client. The server log still records the full failure for the mod's author.
             logger.error("Menu action handler for {} failed", failure, action);
         }
     }
