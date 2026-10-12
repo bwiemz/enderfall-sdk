@@ -29,6 +29,10 @@
   native registration succeeds, so a rejected one can be retried and can never be opened.
 - Fixed `MenuState` capping synchronized entries at 64 while `MenuSpec` accepts two eight-row
   selection lists needing 106, so a legally declared menu could not be opened.
+- Fixed a menu update too large for the 16 KiB menu packet still replacing the server's copy of
+  the state. The client kept showing the old page, so the player's next row click resolved to
+  an entry from a page they never saw. Such an update now throws before anything changes, with
+  a message naming the mod and the packet limit.
 - Fixed non-deterministic iteration order in `BlockEntitySpec.animations()` and
   `ConfigHandle.snapshot()`, both of which copied ordered collections with unordered factories.
 - Fixed builders recording state before validating it, so a rejected declaration left the

@@ -269,6 +269,74 @@ class DefaultMenuManagerTest {
         assertEquals(IllegalArgumentException.class, logger.failures().get(0).getClass());
     }
 
+    @Test
+    void anUpdateTooLargeToSendLeavesTheServerSessionOnTheStateTheClientShows() {
+        LinkedAdapter serverAdapter = new LinkedAdapter(Environment.DEDICATED_SERVER);
+        LinkedAdapter clientAdapter = new LinkedAdapter(Environment.CLIENT);
+        serverAdapter.peer = clientAdapter;
+        clientAdapter.peer = serverAdapter;
+        DefaultMenuManager server = manager(serverAdapter);
+        DefaultMenuManager client = manager(clientAdapter);
+        var list = MenuSelectionList.of("recipes", 10, 20, 120, 3);
+        var spec = MenuSpec.builder("Recipes").size(160, 120).selectionList(list).build();
+        var received = new java.util.ArrayList<String>();
+        var ref = server.register("recipes", spec, action -> received.add(list.action(action).orElseThrow().entryId()));
+        client.register("recipes", spec, ignored -> { });
+        server.open(PLAYER, ref, page(list, "test:shown"));
+
+        var failure = assertThrows(IllegalArgumentException.class,
+                () -> server.update(PLAYER, oversized(page(list, "test:never_sent"))));
+        assertTrue(failure.getMessage().contains(String.valueOf(DefaultMenuManager.PACKET_LIMIT)), failure::getMessage);
+
+        // Row 0 must still resolve to the entry the player can see, not to one from the unsent page.
+        clientAdapter.actionSender.accept(new PortableMenuSubmission("recipes.select.0", Map.of()));
+        assertEquals(java.util.List.of("test:shown"), received);
+        org.junit.jupiter.api.Assertions.assertNull(clientAdapter.updated);
+    }
+
+    @Test
+    void aHandlerUpdateTooLargeToSendLeavesTheServerSessionOnTheStateTheClientShows() {
+        LinkedAdapter serverAdapter = new LinkedAdapter(Environment.DEDICATED_SERVER);
+        LinkedAdapter clientAdapter = new LinkedAdapter(Environment.CLIENT);
+        serverAdapter.peer = clientAdapter;
+        clientAdapter.peer = serverAdapter;
+        RecordingLogger logger = new RecordingLogger();
+        DefaultMenuManager server = manager(serverAdapter, logger);
+        DefaultMenuManager client = manager(clientAdapter);
+        var list = MenuSelectionList.of("recipes", 10, 20, 120, 3);
+        var spec = MenuSpec.builder("Recipes").size(160, 120).selectionList(list).build();
+        var received = new java.util.ArrayList<String>();
+        // A paging handler whose next page is too large: its update fails and is logged.
+        var ref = server.register("recipes", spec, action -> {
+            received.add(list.action(action).orElseThrow().entryId());
+            action.update(oversized(page(list, "test:never_sent")));
+        });
+        client.register("recipes", spec, ignored -> { });
+        server.open(PLAYER, ref, page(list, "test:shown"));
+
+        clientAdapter.actionSender.accept(new PortableMenuSubmission("recipes.select.0", Map.of()));
+        clientAdapter.actionSender.accept(new PortableMenuSubmission("recipes.select.0", Map.of()));
+
+        assertEquals(java.util.List.of("test:shown", "test:shown"), received);
+        assertEquals(2, logger.failures().size());
+        org.junit.jupiter.api.Assertions.assertNull(clientAdapter.updated);
+    }
+
+    private static MenuState page(MenuSelectionList list, String firstEntry) {
+        return MenuState.builder().selectionPage(list,
+                java.util.List.of(MenuSelectionEntry.enabled(firstEntry, "Entry")), 0, "").build();
+    }
+
+    /** Adds legal values until the state no longer fits one menu packet. */
+    private static MenuState oversized(MenuState base) {
+        MenuState.Builder builder = MenuState.builder();
+        base.values().forEach(builder::value);
+        for (int index = 0; index < 20; index++) {
+            builder.value("filler." + index, "x".repeat(1_000));
+        }
+        return builder.build();
+    }
+
     private static DefaultMenuManager manager(LinkedAdapter adapter) {
         return manager(adapter, new RecordingLogger());
     }

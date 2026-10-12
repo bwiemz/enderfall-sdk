@@ -179,13 +179,18 @@ public final class DefaultMenuManager implements MenuManager {
         Objects.requireNonNull(playerId, "playerId");
         Objects.requireNonNull(state, "state");
         ServerSession existing = serverSessions.get(playerId);
-        if (existing != null) validateInputState(existing.registration().spec(), state);
-        ServerSession session = serverSessions.computeIfPresent(playerId,
-                (ignored, current) -> current.withState(state));
-        if (session == null) {
+        if (existing == null) {
             throw new IllegalStateException("[" + modId + "] Player has no active menu on " + target);
         }
-        adapter.sendToPlayer(playerId, payloadId, encodeState(UPDATE, session.id(), state));
+        validateInputState(existing.registration().spec(), state);
+        // Encode before recording the state. Selection rows resolve entry IDs from the server's
+        // copy, so recording a state the client never receives would make the player's next click
+        // act on an entry from a page they cannot see.
+        byte[] payload = encodeState(UPDATE, existing.id(), state);
+        if (!serverSessions.replace(playerId, existing, existing.withState(state))) {
+            throw new IllegalStateException("[" + modId + "] Player's menu changed during the update on " + target);
+        }
+        adapter.sendToPlayer(playerId, payloadId, payload);
     }
 
     @Override
@@ -343,13 +348,21 @@ public final class DefaultMenuManager implements MenuManager {
         return writer;
     }
 
-    private static void writeState(ByteArrayPacketWriter writer, MenuState state) {
+    private void writeState(ByteArrayPacketWriter writer, MenuState state) {
         var entries = new ArrayList<>(state.values().entrySet());
         entries.sort(Comparator.comparing(Map.Entry::getKey));
-        writer.writeVarInt(entries.size());
-        for (Map.Entry<String, String> entry : entries) {
-            writer.writeString(entry.getKey(), 64);
-            writer.writeString(entry.getValue(), MAXIMUM_STATE_VALUE_BYTES);
+        try {
+            writer.writeVarInt(entries.size());
+            for (Map.Entry<String, String> entry : entries) {
+                writer.writeString(entry.getKey(), 64);
+                writer.writeString(entry.getValue(), MAXIMUM_STATE_VALUE_BYTES);
+            }
+        } catch (IllegalArgumentException tooLarge) {
+            // MenuState bounds each key and value, so the packet limit is the only way to get here.
+            // Values are deliberately left out of the message: they may hold private state.
+            throw new IllegalArgumentException("[" + modId + " on " + target + "] Menu state does not fit the "
+                    + PACKET_LIMIT + "-byte menu packet; shorten entry text or show fewer rows per page",
+                    tooLarge);
         }
     }
 
@@ -463,9 +476,12 @@ public final class DefaultMenuManager implements MenuManager {
             if (current == null || current.id() != sessionId) {
                 throw new IllegalStateException("Menu session is no longer active");
             }
+            // Encoded first for the same reason as MenuManager.update: a state that cannot be sent
+            // must not become the one the next row action is validated against.
+            byte[] payload = encodeState(UPDATE, sessionId, replacement);
             state = replacement;
             serverSessions.put(playerId, current.withState(replacement));
-            adapter.sendToPlayer(playerId, payloadId, encodeState(UPDATE, sessionId, replacement));
+            adapter.sendToPlayer(playerId, payloadId, payload);
         }
 
         @Override
