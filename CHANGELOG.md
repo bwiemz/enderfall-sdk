@@ -25,7 +25,8 @@
   retains every block entity, menu and player session its listeners captured.
 - Fixed registration IDs being burned when native registration failed. Item, block, creative
   tab and command registrars now release their reservation, matching the client command,
-  screen and reload registrars.
+  screen and reload registrars. Workbenches and storage containers are now recorded only once
+  native registration succeeds, so a rejected one can be retried and can never be opened.
 - Fixed `MenuState` capping synchronized entries at 64 while `MenuSpec` accepts two eight-row
   selection lists needing 106, so a legally declared menu could not be opened.
 - Fixed non-deterministic iteration order in `BlockEntitySpec.animations()` and

@@ -17,10 +17,10 @@ public final class DefaultWorkbenchManager implements WorkbenchManager {
     private final String target;
     private final PlatformAdapter adapter;
     private final RegistrationGateAccess gate;
-    // Only read and put-if-absent, never iterated, so a concurrent map matches the runtime's other
+    // Only read and put, never iterated, so a concurrent map matches the runtime's other
     // registration tables. Readers on the server thread no longer observe a plain HashMap that a
-    // registration is mutating under a different lock.
-private final Map<ResourceId, PortableWorkbenchDefinition> registrations =
+    // registration is mutating under a different lock. Writes happen only in synchronized register.
+    private final Map<ResourceId, PortableWorkbenchDefinition> registrations =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     public DefaultWorkbenchManager(String modId, String target, PlatformAdapter adapter,
@@ -55,11 +55,14 @@ private final Map<ResourceId, PortableWorkbenchDefinition> registrations =
         PortableWorkbenchDefinition definition = new PortableWorkbenchDefinition(reference, spec, craft ->
                 handler.crafted(new WorkbenchCraftContext(craft.playerId(), reference, craft.recipeId(),
                         new ItemRef(craft.result()), craft.resultCount())));
-        if (registrations.putIfAbsent(id, definition) != null) {
+        if (registrations.containsKey(id)) {
             throw new IllegalStateException("[" + modId + "] Duplicate workbench " + id + " on " + target);
         }
         if (spec.storage().isPresent()) adapter.registerPersistentWorkbench(definition);
         else adapter.registerWorkbench(definition);
+        // Published only once native registration succeeds: a rejected workbench keeps its ID free
+        // for a corrected retry, and open() never reaches a menu the loader does not have yet.
+        registrations.put(id, definition);
         return reference;
     }
 

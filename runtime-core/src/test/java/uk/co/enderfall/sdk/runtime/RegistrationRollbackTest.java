@@ -9,10 +9,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import uk.co.enderfall.sdk.api.ResourceId;
+import uk.co.enderfall.sdk.api.blockentity.BlockEntitySpec;
+import uk.co.enderfall.sdk.api.blockentity.BlockLocation;
 import uk.co.enderfall.sdk.api.command.CommandSpec;
+import uk.co.enderfall.sdk.api.recipe.WorkbenchRecipeTypeRef;
+import uk.co.enderfall.sdk.api.registry.BlockRef;
+import uk.co.enderfall.sdk.api.ui.StorageContainerRef;
+import uk.co.enderfall.sdk.api.ui.StorageContainerSpec;
+import uk.co.enderfall.sdk.api.ui.WorkbenchRef;
+import uk.co.enderfall.sdk.api.ui.WorkbenchSpec;
 import uk.co.enderfall.sdk.api.network.PacketDirection;
 import uk.co.enderfall.sdk.api.platform.CapabilitySet;
 import uk.co.enderfall.sdk.api.platform.Environment;
@@ -29,6 +38,11 @@ import uk.co.enderfall.sdk.api.registry.ItemSpec;
  * silently makes that ID unregisterable and reports a misleading duplicate on every retry.
  */
 class RegistrationRollbackTest {
+    private static final WorkbenchRecipeTypeRef RECIPE =
+            new WorkbenchRecipeTypeRef(ResourceId.of("test_mod", "recipe"), 3);
+    private static final BlockEntitySpec CABINET =
+            BlockEntitySpec.builder(new BlockRef(ResourceId.of("test_mod", "cabinet"))).inventorySlots(27).build();
+
     @TempDir
     Path temporaryDirectory;
 
@@ -117,9 +131,58 @@ class RegistrationRollbackTest {
         assertEquals(1, adapter.registeredCommands.size());
     }
 
+    @Test
+    void aFailedWorkbenchRegistrationReleasesItsId() {
+        FailingAdapter adapter = new FailingAdapter(temporaryDirectory);
+        RuntimeModContext context = new RuntimeModContext("test_mod", adapter);
+        WorkbenchSpec spec = WorkbenchSpec.builder("Bench", RECIPE).build();
+
+        // A native rejection, such as a recipe type the loader has not registered yet.
+        adapter.fail = true;
+        assertThrows(IllegalStateException.class, () -> context.workbenches().register("bench", spec, craft -> { }));
+        assertThrows(IllegalArgumentException.class, () -> context.workbenches().open(UUID.randomUUID(),
+                new WorkbenchRef(ResourceId.of("test_mod", "bench"))));
+
+        adapter.fail = false;
+        WorkbenchRef bench = context.workbenches().register("bench", spec, craft -> { });
+        context.workbenches().open(UUID.randomUUID(), bench);
+        assertEquals(List.of(bench.id()), adapter.openedWorkbenches);
+    }
+
+    @Test
+    void aWorkbenchCannotBeOpenedBeforeItsNativeRegistrationCompletes() {
+        FailingAdapter adapter = new FailingAdapter(temporaryDirectory);
+        RuntimeModContext context = new RuntimeModContext("test_mod", adapter);
+        // Native registration observes the manager mid-registration, as another thread could.
+        adapter.duringWorkbenchRegistration = definition -> assertThrows(IllegalArgumentException.class,
+                () -> context.workbenches().open(UUID.randomUUID(), definition.reference()));
+
+        context.workbenches().register("bench", WorkbenchSpec.builder("Bench", RECIPE).build(), craft -> { });
+
+        assertEquals(List.of(), adapter.openedWorkbenches);
+    }
+
+    @Test
+    void aFailedStorageContainerRegistrationReleasesItsId() {
+        FailingAdapter adapter = new FailingAdapter(temporaryDirectory);
+        RuntimeModContext context = new RuntimeModContext("test_mod", adapter);
+        StorageContainerSpec spec = StorageContainerSpec.builder("Cabinet", CABINET).build();
+        BlockLocation location = new BlockLocation(ResourceId.of("minecraft", "overworld"), 0, 64, 0);
+
+        adapter.fail = true;
+        assertThrows(IllegalStateException.class, () -> context.containers().register("cabinet", spec));
+        assertThrows(IllegalArgumentException.class, () -> context.containers().openAt(UUID.randomUUID(),
+                new StorageContainerRef(ResourceId.of("test_mod", "cabinet")), location));
+
+        adapter.fail = false;
+        assertNotNull(context.containers().register("cabinet", spec));
+    }
+
     private static final class FailingAdapter implements PlatformAdapter {
         private final Path directory;
         private final List<CommandSpec> registeredCommands = new ArrayList<>();
+        private final List<ResourceId> openedWorkbenches = new ArrayList<>();
+        private Consumer<PortableWorkbenchDefinition> duringWorkbenchRegistration = definition -> { };
         private boolean fail;
         private boolean failBlocks;
 
@@ -143,6 +206,17 @@ class RegistrationRollbackTest {
         @Override public void registerCommand(CommandSpec command) {
             if (fail) throw new IllegalStateException("native command registration failed");
             registeredCommands.add(command);
+        }
+        @Override public void registerWorkbench(PortableWorkbenchDefinition definition) {
+            duringWorkbenchRegistration.accept(definition);
+            if (fail) throw new IllegalStateException("native workbench registration failed");
+        }
+        @Override public void openWorkbench(UUID playerId, PortableWorkbenchDefinition definition) {
+            openedWorkbenches.add(definition.reference().id());
+        }
+        @Override public boolean supportsStorageContainers() { return true; }
+        @Override public void registerStorageContainer(PortableStorageContainerDefinition definition) {
+            if (fail) throw new IllegalStateException("native storage container registration failed");
         }
         @Override public void registerPayload(ResourceId id, PacketDirection direction, int maximumBytes,
                                               PayloadReceiver receiver) { }
